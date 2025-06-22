@@ -13,7 +13,7 @@ define('CHAT_HISTORY_FILE', 'chat_history.log');
 define('MAX_HISTORY_LINES', 20);
 
 try {
-    $env = parse_ini_file('.env');
+    $env = parse_ini_file('/etc/secrets/.env');
     if (!$env) {
         throw new Exception("Failed to read .env2 file.");
     }
