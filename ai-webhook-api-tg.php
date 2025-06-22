@@ -1,6 +1,6 @@
 <?php
 // PHP 8.0+ is recommended
-
+echo "Hello, World!\n\n";
 // --- فعال‌سازی حالت دیباگ کامل ---
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);
@@ -13,12 +13,13 @@ define('CHAT_HISTORY_FILE', 'chat_history.log');
 define('MAX_HISTORY_LINES', 20);
 
 try {
-    $env = parse_ini_file('/etc/secrets/.env');
+    /*$env = parse_ini_file('/etc/secrets/.env');
     if (!$env) {
         throw new Exception("Failed to read .env2 file.");
-    }
-    $BOT_TOKEN = $env['BOT_TOKEN'];
-    $GEMINI_API_KEY = $env['GEMINI_API_KEY'];
+    }*/
+
+    $BOT_TOKEN = getenv('BOT_TOKEN') ?? getenv("AI_AF_BOT_TOKEN");
+    $GEMINI_API_KEY = getenv('GEMINI_API_KEY');
 
     $update = json_decode(file_get_contents('php://input'), true);
 
