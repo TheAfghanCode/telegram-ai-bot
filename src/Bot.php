@@ -80,7 +80,7 @@ class Bot
             }
             
             // Determine the parse mode for the Telegram message.
-            $parseMode = (trim($final_ai_response) === '/warn') ? null : 'HTML';
+            $parseMode = (trim($final_ai_response) === '/warn') ? null : 'MarkdownV2';
 
             // Send the response back to the user via Telegram
             $this->telegram->sendMessage($final_ai_response, $chat_id, $message_id, $parseMode);
