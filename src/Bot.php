@@ -2,22 +2,28 @@
 // src/Bot.php
 namespace AfghanCodeAI;
 
+/**
+ * The main brain of the bot.
+ * It orchestrates all operations: receiving updates, processing messages,
+ * handling admin commands, and delegating tasks to other services.
+ */
 class Bot
 {
     private TelegramService $telegram;
     private GeminiClient $gemini;
     private ChatHistory $history;
+    private LoggerService $logger;
 
-    public function __construct(TelegramService $telegram, GeminiClient $gemini, ChatHistory $history)
+    public function __construct(TelegramService $telegram, GeminiClient $gemini, ChatHistory $history, LoggerService $logger)
     {
         $this->telegram = $telegram;
         $this->gemini = $gemini;
         $this->history = $history;
+        $this->logger = $logger;
     }
 
     public function handleUpdate(): void
     {
-        error_log("INFO: Bot->handleUpdate() called."); // Radeyab 5
         $update = json_decode(file_get_contents('php://input'), true);
 
         if (isset($update['message']['text']) && isset($update['message']['from']) && isset($update['message']['chat'])) {
@@ -27,35 +33,28 @@ class Bot
             $user_id = $message['from']['id'];
             $user_message = $message['text'];
             
-            // --- Admin Command Gatekeeper ---
+            $user_info = ['id' => $user_id, 'first_name' => $message['from']['first_name'] ?? '', 'username' => $message['from']['username'] ?? 'N/A'];
+
+            // Admin Command Gatekeeper
             if (defined('ADMIN_USER_ID') && $user_id === ADMIN_USER_ID && str_starts_with($user_message, 'دستور عمومی:')) {
                 $this->handleAdminCommand($user_message, $chat_id, $message['message_id']);
-                return; // Stop further processing
+                return;
             }
 
-            // Normal processing for all users
-            $user_info = [
-                'id' => $user_id,
-                'first_name' => $message['from']['first_name'] ?? '',
-                'username' => $message['from']['username'] ?? 'N/A'
-            ];
+            // Normal message processing
             $this->processMessage($chat_id, $user_message, $message['message_id'], $user_info);
-        } else {
-             error_log("INFO: Update received, but it's not a processable text message.");
         }
     }
     
     private function handleAdminCommand(string $raw_command, int $chat_id, int $message_id): void
     {
         $instruction = trim(str_replace('دستور عمومی:', '', $raw_command));
+        $responseText = "⚠️ دستور عمومی نمی‌تواند خالی باشد.";
 
         if (!empty($instruction) && defined('PUBLIC_MEMORY_FILE')) {
-            // Append the new rule to the public memory file
             file_put_contents(PUBLIC_MEMORY_FILE, $instruction . PHP_EOL, FILE_APPEND | LOCK_EX);
             $responseText = "✅ دستور عمومی با موفقیت ثبت شد و از این پس برای تمام کاربران اعمال می‌شود.";
-            error_log("ADMIN COMMAND: New global rule added by admin " . ADMIN_USER_ID . ": " . $instruction);
-        } else {
-            $responseText = "⚠️ دستور عمومی نمی‌تواند خالی باشد.";
+            $this->logger->logSystem("Admin command executed: {$instruction}", "ADMIN");
         }
         
         $this->telegram->sendMessage($responseText, $chat_id, $message_id);
@@ -63,39 +62,45 @@ class Bot
 
     private function processMessage(int $chat_id, string $user_message, int $message_id, array $user_info): void
     {
-        error_log("INFO: Bot->processMessage() for chat {$chat_id} started."); // Radeyab 6
-        $geminiResponse = null; // Initialize to null for better error reporting
         try {
             $formatted_prompt = "[User: {$user_info['first_name']} (Username: @{$user_info['username']}, ID: {$user_info['id']})] says:\n{$user_message}";
             $history_contents = $this->history->load($chat_id);
             $geminiResponse = $this->gemini->getGeminiResponse($formatted_prompt, $history_contents);
 
-            error_log("INFO: Gemini response type: " . ($geminiResponse['type'] ?? 'unknown')); // Radeyab 7
-
             if ($geminiResponse['type'] === 'function_call') {
+                $this->logger->logSystem("Function call requested: {$geminiResponse['data']['name']}", 'DEBUG');
                 $this->handleFunctionCall($geminiResponse['data'], $chat_id, $message_id);
             } else {
-                $this->handleTextResponse($geminiResponse['data'], $formatted_prompt, $chat_id, $message_id);
+                $ai_text = $geminiResponse['data'];
+                $this->logger->logChat($user_info, $user_message, $ai_text);
+                $this->handleTextResponse($ai_text, $formatted_prompt, $chat_id, $message_id);
             }
         } catch (\Throwable $e) {
-            $error_message = $e->getMessage();
-            $problematicText = ($geminiResponse && is_array($geminiResponse) && isset($geminiResponse['data'])) ? (is_array($geminiResponse['data']) ? json_encode($geminiResponse['data']) : $geminiResponse['data']) : 'N/A';
-            error_log("--- PROCESSING ERROR ---: ChatID: {$chat_id}, UserID: {$user_info['id']}. Error: {$error_message}. Problematic Text: {$problematicText}");
+            $logMessage = "FATAL PROCESSING ERROR in chat {$chat_id}\nError: {$e->getMessage()}\nTrace: {$e->getTraceAsString()}";
+            $this->logger->logSystem($logMessage, 'FATAL');
             $this->telegram->sendMessage("<b>متاسفم، یک خطای داخلی پیش اومد!</b>", $chat_id, $message_id);
         }
     }
 
     private function handleTextResponse(string $ai_text, string $formatted_prompt, int $chat_id, int $message_id): void
     {
-        if (trim($ai_text) !== '/warn') {
-            $this->history->save($formatted_prompt, $ai_text, $chat_id);
+        try {
+            if (trim($ai_text) !== '/warn') {
+                $this->history->save($formatted_prompt, $ai_text, $chat_id);
+            }
+            $this->telegram->sendMessage($ai_text, $chat_id, $message_id, 'HTML');
+        } catch (\Exception $e) {
+            // Smart logging for failed HTML sends
+            $logMessage = "HTML SEND FAILED for chat {$chat_id}\nError: {$e->getMessage()}\nProblematic Text: [{$ai_text}]";
+            $this->logger->logSystem($logMessage, 'ERROR');
+            
+            // Fallback attempt: send the message with all tags stripped.
+            $this->telegram->sendMessage(strip_tags($ai_text), $chat_id, $message_id, null);
         }
-        $this->telegram->sendMessage($ai_text, $chat_id, $message_id);
     }
 
     private function handleFunctionCall(array $functionCallData, int $chat_id, int $message_id): void
     {
-        error_log("INFO: Bot->handleFunctionCall() for '{$functionCallData['name']}' called."); // Radeyab 8
         switch ($functionCallData['name']) {
             case 'send_private_message':
                 $this->executeSendPrivateMessage($functionCallData['args'], $chat_id, $message_id);
@@ -105,6 +110,7 @@ class Bot
                 break;
             default:
                 $this->telegram->sendMessage("⚠️ خطا: ابزار ناشناخته‌ای درخواست شد.", $chat_id, $message_id);
+                $this->logger->logSystem("Unknown function call requested: {$functionCallData['name']}", "WARNING");
         }
     }
     
@@ -112,19 +118,17 @@ class Bot
     {
         $targetUserId = $args['user_id_to_send'] ?? null;
         $messageText = $args['message_text'] ?? null;
-        error_log("INFO: Executing send_private_message to target {$targetUserId}."); // Radeyab 9
 
         if ($targetUserId && $messageText) {
             try {
                 $this->telegram->sendMessage($messageText, (int)$targetUserId);
                 $this->telegram->sendMessage("✅ پیام شما با موفقیت برای کاربر <b>{$targetUserId}</b> ارسال شد.", $original_chat_id, $original_message_id);
-                error_log("SUCCESS: Private message sent and confirmation delivered."); // Radeyab 10
+                $this->logger->logSystem("Executed 'send_private_message' to user {$targetUserId}", "INFO");
             } catch (\Throwable $e) {
-                $this->telegram->sendMessage("⚠️ مشکلی پیش اومد. من سعی کردم پیام رو بفرستم ولی نشد. مطمئن هستی کاربر ربات رو بلاک نکرده؟", $original_chat_id, $original_message_id);
-                error_log("ERROR in executeSendPrivateMessage: " . $e->getMessage());
+                $this->telegram->sendMessage("⚠️ مشکلی پیش اومد. من سعی کردم پیام رو بفرستم ولی نشد.", $original_chat_id, $original_message_id);
+                $this->logger->logSystem("Failed to execute 'send_private_message': " . $e->getMessage(), "ERROR");
             }
         } else {
-            error_log("ERROR: Missing arguments for send_private_message.");
             $this->telegram->sendMessage("⚠️ برای ارسال پیام، باید آیدی عددی و متن پیام رو مشخص کنی.", $original_chat_id, $original_message_id);
         }
     }
@@ -135,8 +139,10 @@ class Bot
             $confirmationText = "✅ درخواست شما انجام شد. تمام سابقه گفتگوی ما پاک شد و من دیگه بهش دسترسی ندارم.";
             $this->telegram->sendMessage($confirmationText, $chat_id);
             $this->telegram->deleteMessage($chat_id, $user_command_message_id);
+            $this->logger->logSystem("Chat history for chat_id {$chat_id} was successfully archived.", "INFO");
         } else {
             $this->telegram->sendMessage("⚠️ مشکلی در آرشیو کردن سابقه گفتگو پیش آمد.", $chat_id, $user_command_message_id);
+            $this->logger->logSystem("Failed to archive history for chat_id {$chat_id}.", "ERROR");
         }
     }
 }
