@@ -39,7 +39,12 @@ class GeminiClient
                     [
                         'name' => 'delete_chat_history',
                         'description' => 'Deletes the current conversation history for the user or group.',
-                        'parameters' => ['type' => 'OBJECT', 'properties' => []] // No parameters
+                        'parameters' => [
+                            'type' => 'OBJECT',
+                            // --- THE FIX IS HERE ---
+                            // We now use an empty object instead of an empty array.
+                            'properties' => new \stdClass()
+                        ]
                     ]
                 ]
             ]
@@ -71,7 +76,15 @@ class GeminiClient
 
         $result = json_decode($response, true);
         $candidate = $result['candidates'][0] ?? null;
-        if (!$candidate) throw new \Exception("Invalid Gemini Response: No candidates. " . $response);
+
+        // Check for API-level errors in the response body
+        if (isset($result['error'])) {
+            throw new \Exception("Gemini API Error: " . $result['error']['message']);
+        }
+
+        if (!$candidate) {
+            throw new \Exception("Invalid Gemini Response: No candidates found. Full Response: " . $response);
+        }
 
         if (isset($candidate['content']['parts'][0]['functionCall'])) {
             $functionCall = $candidate['content']['parts'][0]['functionCall'];
@@ -82,12 +95,15 @@ class GeminiClient
             return ['type' => 'text', 'data' => $candidate['content']['parts'][0]['text']];
         }
 
-        throw new \Exception("Invalid Gemini Response: No text or function call. " . $response);
+        throw new \Exception("Invalid Gemini Response: No text or function call found. Full Response: " . $response);
     }
     
     private function loadTemplate(string $templatePath): void
     {
-        if (!file_exists($templatePath)) throw new \Exception("Prompt template file not found");
+        if (!file_exists($templatePath)) throw new \Exception("Prompt template file not found: " . $templatePath);
         $this->promptTemplate = json_decode(file_get_contents($templatePath), true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \Exception("Invalid JSON in prompt template: " . json_last_error_msg());
+        }
     }
 }
