@@ -13,61 +13,87 @@ class TelegramService
 
     public function sendMessage(string $messageText, int $chatID, ?int $replyToMessageId = null, ?string $parseMode = 'HTML'): void
     {
-        // --- NEW: Bulletproof HTML Sanitizer ---
-        // Before sending, we validate the HTML. If it's broken, we strip all tags to ensure delivery.
         $sanitizedText = $this->validateAndSanitizeHtml($messageText);
-
         try {
             $this->sendRequest('sendMessage', [
                 'chat_id' => $chatID,
-                'text' => $sanitizedText, // Use the sanitized text
+                'text' => $sanitizedText,
                 'reply_to_message_id' => $replyToMessageId,
                 'parse_mode' => $parseMode,
             ]);
         } catch (\Exception $e) {
-            // If it still fails, try sending with tags stripped completely as a last resort.
             error_log("HTML Send Failed, Retrying with stripped text. Original Error: " . $e->getMessage());
-            $this->sendRequest('sendMessage', [
-                'chat_id' => $chatID,
-                'text' => strip_tags($messageText), // Fallback to plain text
-                'reply_to_message_id' => $replyToMessageId,
-                'parse_mode' => null, // No parse mode for plain text
-            ]);
+            try {
+                // Fallback to sending as plain text if HTML parsing fails.
+                $this->sendRequest('sendMessage', [
+                    'chat_id' => $chatID,
+                    'text' => strip_tags($messageText),
+                    'reply_to_message_id' => $replyToMessageId,
+                    'parse_mode' => null, // No parse mode for plain text
+                ]);
+            } catch (\Exception $fallback_e) {
+                // If even the fallback fails, log it.
+                error_log("FATAL SEND ERROR: Fallback plain text send also failed. Error: " . $fallback_e->getMessage());
+            }
         }
     }
 
-    /**
-     * Validates if a string contains well-formed HTML for basic tags.
-     * If not, it returns the string with all tags stripped to prevent API errors.
-     */
+    public function deleteMessage(int $chatId, int $messageId): void
+    {
+        try {
+            $this->sendRequest('deleteMessage', [
+                'chat_id' => $chatId,
+                'message_id' => $messageId,
+            ]);
+        } catch (\Throwable $e) {
+            error_log("WARNING: Could not delete message {$messageId}. Reason: " . $e->getMessage());
+        }
+    }
+
     private function validateAndSanitizeHtml(string $html): string
     {
         if (empty(trim($html)) || !str_contains($html, '<')) {
-            return $html; // Not HTML, return as is.
+            return $html;
         }
-
-        // Use PHP's built-in DOM parser to check for well-formedness.
-        // We suppress errors because we are handling them manually.
         libxml_use_internal_errors(true);
         $doc = new \DOMDocument();
-        // We wrap the HTML fragment in a div and use a specific encoding to handle UTF-8 correctly.
-        $doc->loadHTML('<?xml encoding="UTF-8"><div id="wrapper">' . $html . '</div>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-        
+        $doc->loadHTML('<?xml encoding="UTF-8"><div>' . $html . '</div>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         $errors = libxml_get_errors();
         libxml_clear_errors();
         libxml_use_internal_errors(false);
-
         if (!empty($errors)) {
-            // There are parsing errors (like unclosed tags).
-            error_log("HTML Validation Failed: Malformed HTML detected. Stripping tags. Original text: " . $html);
-            return strip_tags($html); // Return plain text as a safe fallback.
+            error_log("HTML Validation Failed. Stripping tags. Original: " . $html);
+            return strip_tags($html);
         }
-
-        // HTML seems to be well-formed.
         return $html;
     }
     
-    // deleteMessage and sendRequest methods remain the same as before...
-    public function deleteMessage(int $chatId, int $messageId): void { /* ... */ }
-    private function sendRequest(string $method, array $params): array { /* ... */ }
+    /**
+     * A generic method to send requests to the Telegram API.
+     * THE FIX IS HERE: This function now correctly handles all return paths.
+     */
+    private function sendRequest(string $method, array $params): array
+    {
+        $url = "{$this->apiUrl}/{$method}";
+        
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $params,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 15,
+        ]);
+
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($http_code !== 200 || $response === false) {
+            throw new \Exception("Telegram API error for {$method}. Code: {$http_code}, Response: " . ($response ?: 'No response'));
+        }
+
+        // json_decode can return null, but the function must return an array.
+        // So we cast null to an empty array.
+        return json_decode($response, true) ?? [];
+    }
 }
