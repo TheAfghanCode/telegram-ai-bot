@@ -1,6 +1,10 @@
 <?php
 // ai-webhook-api-tg.php
 
+// --- NEW: Extend maximum execution time ---
+// Give the script up to 2 minutes to run, preventing server timeouts on slow AI responses.
+set_time_limit(120);
+
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 ini_set('error_log', __DIR__ . '/bot_errors.log');
@@ -21,23 +25,20 @@ use AfghanCodeAI\TelegramService;
 use AfghanCodeAI\ChatHistory;
 
 try {
-    // Instantiate all services with the correct arguments
+    error_log("INFO: Webhook started."); // Radeyab 1
+    
     $telegramService = new TelegramService(BOT_TOKEN);
     $chatHistory = new ChatHistory(CHAT_HISTORY_DIR, ARCHIVED_HISTORY_DIR, MAX_HISTORY_LINES);
-    
-    // --- THE FIX IS HERE ---
-    // We now pass the third required argument (PUBLIC_MEMORY_FILE) to the GeminiClient constructor.
     $geminiClient = new GeminiClient(GEMINI_API_KEY, PROMPT_TEMPLATE_PATH, PUBLIC_MEMORY_FILE);
     
-    // Inject all dependencies into the Bot
     $bot = new Bot($telegramService, $geminiClient, $chatHistory);
     $bot->handleUpdate();
 
+    error_log("INFO: Webhook finished successfully."); // Radeyab 2
+
 } catch (Throwable $e) {
-    // Log any fatal errors that occur during the process
     error_log("--- FATAL ERROR ---: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
 }
 
-// Always respond to Telegram with a 200 OK to prevent webhook retries
 http_response_code(200);
 echo "OK";
