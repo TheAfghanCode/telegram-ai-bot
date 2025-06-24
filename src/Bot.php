@@ -4,24 +4,68 @@ namespace AfghanCodeAI;
 
 class Bot
 {
-    // ... properties and constructor are the same
     private TelegramService $telegram;
     private GeminiClient $gemini;
     private ChatHistory $history;
 
-    public function __construct(TelegramService $telegram, GeminiClient $gemini, ChatHistory $history) { /* ... */ }
+    public function __construct(TelegramService $telegram, GeminiClient $gemini, ChatHistory $history)
+    {
+        $this->telegram = $telegram;
+        $this->gemini = $gemini;
+        $this->history = $history;
+    }
 
     public function handleUpdate(): void
     {
         error_log("INFO: Bot->handleUpdate() called."); // Radeyab 5
-        // ... rest of handleUpdate is the same
+        $update = json_decode(file_get_contents('php://input'), true);
+
+        if (isset($update['message']['text']) && isset($update['message']['from']) && isset($update['message']['chat'])) {
+            $message = $update['message'];
+            
+            $chat_id = $message['chat']['id']; 
+            $user_id = $message['from']['id'];
+            $user_message = $message['text'];
+            
+            // --- Admin Command Gatekeeper ---
+            if (defined('ADMIN_USER_ID') && $user_id === ADMIN_USER_ID && str_starts_with($user_message, 'دستور عمومی:')) {
+                $this->handleAdminCommand($user_message, $chat_id, $message['message_id']);
+                return; // Stop further processing
+            }
+
+            // Normal processing for all users
+            $user_info = [
+                'id' => $user_id,
+                'first_name' => $message['from']['first_name'] ?? '',
+                'username' => $message['from']['username'] ?? 'N/A'
+            ];
+            $this->processMessage($chat_id, $user_message, $message['message_id'], $user_info);
+        } else {
+             error_log("INFO: Update received, but it's not a processable text message.");
+        }
+    }
+    
+    private function handleAdminCommand(string $raw_command, int $chat_id, int $message_id): void
+    {
+        $instruction = trim(str_replace('دستور عمومی:', '', $raw_command));
+
+        if (!empty($instruction) && defined('PUBLIC_MEMORY_FILE')) {
+            // Append the new rule to the public memory file
+            file_put_contents(PUBLIC_MEMORY_FILE, $instruction . PHP_EOL, FILE_APPEND | LOCK_EX);
+            $responseText = "✅ دستور عمومی با موفقیت ثبت شد و از این پس برای تمام کاربران اعمال می‌شود.";
+            error_log("ADMIN COMMAND: New global rule added by admin " . ADMIN_USER_ID . ": " . $instruction);
+        } else {
+            $responseText = "⚠️ دستور عمومی نمی‌تواند خالی باشد.";
+        }
+        
+        $this->telegram->sendMessage($responseText, $chat_id, $message_id);
     }
 
     private function processMessage(int $chat_id, string $user_message, int $message_id, array $user_info): void
     {
         error_log("INFO: Bot->processMessage() for chat {$chat_id} started."); // Radeyab 6
+        $geminiResponse = null; // Initialize to null for better error reporting
         try {
-            // ... same logic as before
             $formatted_prompt = "[User: {$user_info['first_name']} (Username: @{$user_info['username']}, ID: {$user_info['id']})] says:\n{$user_message}";
             $history_contents = $this->history->load($chat_id);
             $geminiResponse = $this->gemini->getGeminiResponse($formatted_prompt, $history_contents);
@@ -34,8 +78,19 @@ class Bot
                 $this->handleTextResponse($geminiResponse['data'], $formatted_prompt, $chat_id, $message_id);
             }
         } catch (\Throwable $e) {
-            // ... same catch block logic
+            $error_message = $e->getMessage();
+            $problematicText = ($geminiResponse && is_array($geminiResponse) && isset($geminiResponse['data'])) ? (is_array($geminiResponse['data']) ? json_encode($geminiResponse['data']) : $geminiResponse['data']) : 'N/A';
+            error_log("--- PROCESSING ERROR ---: ChatID: {$chat_id}, UserID: {$user_info['id']}. Error: {$error_message}. Problematic Text: {$problematicText}");
+            $this->telegram->sendMessage("<b>متاسفم، یک خطای داخلی پیش اومد!</b>", $chat_id, $message_id);
         }
+    }
+
+    private function handleTextResponse(string $ai_text, string $formatted_prompt, int $chat_id, int $message_id): void
+    {
+        if (trim($ai_text) !== '/warn') {
+            $this->history->save($formatted_prompt, $ai_text, $chat_id);
+        }
+        $this->telegram->sendMessage($ai_text, $chat_id, $message_id);
     }
 
     private function handleFunctionCall(array $functionCallData, int $chat_id, int $message_id): void
@@ -45,7 +100,11 @@ class Bot
             case 'send_private_message':
                 $this->executeSendPrivateMessage($functionCallData['args'], $chat_id, $message_id);
                 break;
-            // ... other cases
+            case 'delete_chat_history':
+                $this->executeDeleteChatHistory($chat_id, $message_id);
+                break;
+            default:
+                $this->telegram->sendMessage("⚠️ خطا: ابزار ناشناخته‌ای درخواست شد.", $chat_id, $message_id);
         }
     }
     
@@ -61,7 +120,6 @@ class Bot
                 $this->telegram->sendMessage("✅ پیام شما با موفقیت برای کاربر <b>{$targetUserId}</b> ارسال شد.", $original_chat_id, $original_message_id);
                 error_log("SUCCESS: Private message sent and confirmation delivered."); // Radeyab 10
             } catch (\Throwable $e) {
-                // ... same catch block
                 $this->telegram->sendMessage("⚠️ مشکلی پیش اومد. من سعی کردم پیام رو بفرستم ولی نشد. مطمئن هستی کاربر ربات رو بلاک نکرده؟", $original_chat_id, $original_message_id);
                 error_log("ERROR in executeSendPrivateMessage: " . $e->getMessage());
             }
@@ -70,6 +128,15 @@ class Bot
             $this->telegram->sendMessage("⚠️ برای ارسال پیام، باید آیدی عددی و متن پیام رو مشخص کنی.", $original_chat_id, $original_message_id);
         }
     }
-
-    // ... other methods are unchanged
+    
+    private function executeDeleteChatHistory(int $chat_id, int $user_command_message_id): void
+    {
+        if ($this->history->archive($chat_id)) {
+            $confirmationText = "✅ درخواست شما انجام شد. تمام سابقه گفتگوی ما پاک شد و من دیگه بهش دسترسی ندارم.";
+            $this->telegram->sendMessage($confirmationText, $chat_id);
+            $this->telegram->deleteMessage($chat_id, $user_command_message_id);
+        } else {
+            $this->telegram->sendMessage("⚠️ مشکلی در آرشیو کردن سابقه گفتگو پیش آمد.", $chat_id, $user_command_message_id);
+        }
+    }
 }
