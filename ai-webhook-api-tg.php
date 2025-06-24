@@ -21,19 +21,23 @@ use AfghanCodeAI\TelegramService;
 use AfghanCodeAI\ChatHistory;
 
 try {
-    // UPDATED: Correctly instantiate all services
+    // Instantiate all services with the correct arguments
     $telegramService = new TelegramService(BOT_TOKEN);
     $chatHistory = new ChatHistory(CHAT_HISTORY_DIR, ARCHIVED_HISTORY_DIR, MAX_HISTORY_LINES);
-    $geminiClient = new GeminiClient(GEMINI_API_KEY, PROMPT_TEMPLATE_PATH);
     
-    // Inject dependencies into the Bot
+    // --- THE FIX IS HERE ---
+    // We now pass the third required argument (PUBLIC_MEMORY_FILE) to the GeminiClient constructor.
+    $geminiClient = new GeminiClient(GEMINI_API_KEY, PROMPT_TEMPLATE_PATH, PUBLIC_MEMORY_FILE);
+    
+    // Inject all dependencies into the Bot
     $bot = new Bot($telegramService, $geminiClient, $chatHistory);
     $bot->handleUpdate();
 
 } catch (Throwable $e) {
+    // Log any fatal errors that occur during the process
     error_log("--- FATAL ERROR ---: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
 }
 
-// Always respond to Telegram to prevent retries
+// Always respond to Telegram with a 200 OK to prevent webhook retries
 http_response_code(200);
 echo "OK";
