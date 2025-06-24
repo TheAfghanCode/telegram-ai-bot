@@ -2,60 +2,107 @@
 // src/ChatHistory.php
 namespace AfghanCodeAI;
 
+/**
+ * Manages conversation history using a PostgreSQL database.
+ * It reads connection details from the centralized config file.
+ */
 class ChatHistory
 {
-    private string $historyDir;
-    private string $archiveDir;
+    private ?\PDO $pdo = null;
     private int $maxLines;
 
-    public function __construct(string $historyDir, string $archiveDir, int $maxLines)
+    public function __construct(int $maxLines)
     {
-        $this->historyDir = $historyDir;
-        $this->archiveDir = $archiveDir;
         $this->maxLines = $maxLines;
-        if (!is_dir($this->historyDir)) mkdir($this->historyDir, 0777, true);
-        if (!is_dir($this->archiveDir)) mkdir($this->archiveDir, 0777, true);
+        $this->connect();
+        if ($this->pdo) {
+            $this->ensureTableExists();
+        }
     }
-    
-    // getHistoryFilePath() and load() methods remain unchanged...
-    private function getHistoryFilePath(int $chatId): string
+
+    private function connect(): void
     {
-        return "{$this->historyDir}/chat_{$chatId}.log";
+        try {
+            // UPDATED: Uses the new, individual database constants from config.php
+            $dsn = sprintf(
+                'pgsql:host=%s;port=%d;dbname=%s;user=%s;password=%s',
+                DB_HOST,
+                DB_PORT,
+                DB_NAME,
+                DB_USER,
+                DB_PASS
+            );
+            $this->pdo = new \PDO($dsn);
+            $this->pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+        } catch (\PDOException $e) {
+            error_log("Failed to connect to PostgreSQL: " . $e->getMessage());
+            $this->pdo = null;
+        }
+    }
+
+    private function ensureTableExists(): void
+    {
+        $sql = "
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id SERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                role VARCHAR(10) NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_id_timestamp ON chat_history (chat_id, created_at);
+        ";
+        $this->pdo->exec($sql);
     }
 
     public function load(int $chatId): array
     {
-        $filePath = $this->getHistoryFilePath($chatId);
-        if (!file_exists($filePath)) return [];
-        $lines = file($filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        return $lines ? array_filter(array_map(fn($line) => json_decode($line, true), $lines)) : [];
+        if (!$this->pdo) return [];
+
+        $sql = "SELECT role, content FROM chat_history WHERE chat_id = ? ORDER BY created_at ASC";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute([$chatId]);
+
+        $results = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        return array_map(fn($row) => ['role' => $row['role'], 'parts' => [['text' => $row['content']]]], $results);
     }
-    
+
     public function save(string $user_message_with_context, string $ai_response, int $chatId): void
     {
-        $filePath = $this->getHistoryFilePath($chatId);
-        $all_lines = file_exists($filePath) ? file($filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+        if (!$this->pdo) return;
+
+        $sql = "INSERT INTO chat_history (chat_id, role, content) VALUES (?, ?, ?)";
+        $stmt = $this->pdo->prepare($sql);
         
-        $all_lines[] = json_encode(['role' => 'user', 'parts' => [['text' => $user_message_with_context]]]);
-        $all_lines[] = json_encode(['role' => 'model', 'parts' => [['text' => $ai_response]]]);
-
-        // UPDATED: Check for the UNLIMITED_HISTORY flag before trimming the history.
-        if (defined('UNLIMITED_HISTORY') && !UNLIMITED_HISTORY && count($all_lines) > $this->maxLines) {
-            $all_lines = array_slice($all_lines, -$this->maxLines);
+        $stmt->execute([$chatId, 'user', $user_message_with_context]);
+        $stmt->execute([$chatId, 'model', $ai_response]);
+        
+        if (defined('UNLIMITED_HISTORY') && !UNLIMITED_HISTORY) {
+            $this->trimHistory($chatId);
         }
+    }
 
-        file_put_contents($filePath, implode(PHP_EOL, $all_lines) . PHP_EOL, LOCK_EX);
+    private function trimHistory(int $chatId): void
+    {
+        $countSql = "SELECT COUNT(*) FROM chat_history WHERE chat_id = ?";
+        $stmt = $this->pdo->prepare($countSql);
+        $stmt->execute([$chatId]);
+        $count = (int)$stmt->fetchColumn();
+
+        if ($count > $this->maxLines) {
+            $limit = $count - $this->maxLines;
+            $deleteSql = "DELETE FROM chat_history WHERE id IN (SELECT id FROM chat_history WHERE chat_id = ? ORDER BY created_at ASC LIMIT ?)";
+            $deleteStmt = $this->pdo->prepare($deleteSql);
+            $deleteStmt->execute([$chatId, $limit]);
+        }
     }
     
     public function archive(int $chatId): bool
     {
-        // ... archive() method remains unchanged.
-        $sourcePath = $this->getHistoryFilePath($chatId);
-        if (!file_exists($sourcePath)) return true;
+        if (!$this->pdo) return false;
         
-        $archiveFileName = "archived_chat_{$chatId}_" . date('Y-m-d_H-i-s') . ".log";
-        $destinationPath = "{$this->archiveDir}/{$archiveFileName}";
-        
-        return rename($sourcePath, $destinationPath);
+        $sql = "DELETE FROM chat_history WHERE chat_id = ?";
+        $stmt = $this->pdo->prepare($sql);
+        return $stmt->execute([$chatId]);
     }
 }

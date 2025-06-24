@@ -35,13 +35,13 @@ class Bot
             
             $user_info = ['id' => $user_id, 'first_name' => $message['from']['first_name'] ?? '', 'username' => $message['from']['username'] ?? 'N/A'];
 
-            // Admin Command Gatekeeper
+            // --- Admin Command Gatekeeper ---
             if (defined('ADMIN_USER_ID') && $user_id === ADMIN_USER_ID && str_starts_with($user_message, 'دستور عمومی:')) {
                 $this->handleAdminCommand($user_message, $chat_id, $message['message_id']);
-                return;
+                return; // Stop further processing for admin commands
             }
 
-            // Normal message processing
+            // --- Normal Message Processing ---
             $this->processMessage($chat_id, $user_message, $message['message_id'], $user_info);
         }
     }
@@ -90,7 +90,6 @@ class Bot
             }
             $this->telegram->sendMessage($ai_text, $chat_id, $message_id, 'HTML');
         } catch (\Exception $e) {
-            // Smart logging for failed HTML sends
             $logMessage = "HTML SEND FAILED for chat {$chat_id}\nError: {$e->getMessage()}\nProblematic Text: [{$ai_text}]";
             $this->logger->logSystem($logMessage, 'ERROR');
             

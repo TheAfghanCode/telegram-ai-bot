@@ -10,7 +10,7 @@
 // Give the script up to 2 minutes to run to prevent timeouts on slow AI responses.
 set_time_limit(120);
 
-// Setup error logging
+// Setup error logging to a local file for critical infrastructure errors.
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 ini_set('error_log', __DIR__ . '/bot_errors.log');
@@ -35,23 +35,27 @@ use AfghanCodeAI\ChatHistory;
 use AfghanCodeAI\LoggerService;
 
 try {
-    // Instantiate all services with the correct arguments from config.php
+    // 1. Instantiate ChatHistory (which connects to the PostgreSQL database)
+    $chatHistory = new ChatHistory(MAX_HISTORY_LINES);
+    
+    // 2. Instantiate TelegramService
     $telegramService = new TelegramService(BOT_TOKEN);
-    $chatHistory = new ChatHistory(CHAT_HISTORY_DIR, ARCHIVED_HISTORY_DIR, MAX_HISTORY_LINES);
+    
+    // 3. Instantiate the new central LoggerService
+    $logger = new LoggerService(BOT_TOKEN, LOG_CHANNEL_ADMIN, LOG_CHANNEL_USER, LOG_CHANNEL_ALL, LOG_CHANNEL_SYSTEM);
+    
+    // 4. Instantiate GeminiClient, providing the public memory file path
     $geminiClient = new GeminiClient(GEMINI_API_KEY, PROMPT_TEMPLATE_PATH, PUBLIC_MEMORY_FILE);
     
-    // Create the new Logger instance
-    $logger = new LoggerService(BOT_TOKEN, LOG_CHANNEL_ADMIN, LOG_CHANNEL_USER, LOG_CHANNEL_ALL, LOG_CHANNEL_SYSTEM);
-
-    // Instantiate the main Bot, injecting all dependencies including the new logger
+    // 5. Instantiate the main Bot, injecting all services as dependencies
     $bot = new Bot($telegramService, $geminiClient, $chatHistory, $logger);
     
-    // Handle the incoming update
+    // 6. Handle the incoming update from Telegram
     $bot->handleUpdate();
 
 } catch (Throwable $e) {
     // Catch any uncaught exception and log it to the main error file.
-    // This is the last line of defense.
+    // This is the last line of defense for critical failures.
     error_log("--- FATAL UNHANDLED ERROR ---: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
 }
 
