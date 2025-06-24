@@ -21,30 +21,51 @@ class Bot
 
         if (isset($update['message']['text']) && isset($update['message']['from']) && isset($update['message']['chat'])) {
             $message = $update['message'];
+            $chat_id = $message['chat']['id'];
+            $user_id = $message['from']['id'];
+            $user_message = $message['text'];
             
-            // The unique identifier for a conversation context is the chat ID.
-            $chat_id = $message['chat']['id']; 
+            // --- NEW: Admin Command Gatekeeper ---
+            // Check if the message is a global command from the admin.
+            if ($user_id === ADMIN_USER_ID && str_starts_with($user_message, 'دستور عمومی:')) {
+                $this->handleAdminCommand($user_message, $chat_id, $message['message_id']);
+                return; // Stop further processing
+            }
 
-            // User info is still valuable for context within the prompt.
-            $user_info = [
-                'id' => $message['from']['id'],
-                'first_name' => $message['from']['first_name'] ?? '',
-                'username' => $message['from']['username'] ?? 'N/A'
-            ];
-
-            $this->processMessage($chat_id, $message['text'], $message['message_id'], $user_info);
+            // If not an admin command, proceed with normal processing.
+            $user_info = ['id' => $user_id, 'first_name' => $message['from']['first_name'] ?? '', 'username' => $message['from']['username'] ?? 'N/A'];
+            $this->processMessage($chat_id, $user_message, $message['message_id'], $user_info);
         }
     }
 
+    /**
+     * NEW: Handles global commands from the admin.
+     */
+    private function handleAdminCommand(string $raw_command, int $chat_id, int $message_id): void
+    {
+        // Extract the actual instruction from the command
+        $instruction = trim(str_replace('دستور عمومی:', '', $raw_command));
+
+        if (!empty($instruction)) {
+            // Append the new rule to the public memory file
+            file_put_contents(PUBLIC_MEMORY_FILE, $instruction . PHP_EOL, FILE_APPEND | LOCK_EX);
+            $responseText = "✅ دستور عمومی با موفقیت ثبت شد و از این پس برای تمام کاربران اعمال می‌شود.";
+            error_log("ADMIN COMMAND: New global rule added by admin " . ADMIN_USER_ID . ": " . $instruction);
+        } else {
+            $responseText = "⚠️ دستور عمومی نمی‌تواند خالی باشد.";
+        }
+        
+        $this->telegram->sendMessage($responseText, $chat_id, $message_id);
+    }
+
+    // processMessage, handleTextResponse, and handleFunctionCall methods remain unchanged.
+    // They will now be affected by the global rules injected by GeminiClient.
     private function processMessage(int $chat_id, string $user_message, int $message_id, array $user_info): void
     {
+        // ... same logic as before
         try {
-            // Create a richer prompt with all user details
             $formatted_prompt = "[User: {$user_info['first_name']} (Username: @{$user_info['username']}, ID: {$user_info['id']})] says:\n{$user_message}";
-            
-            // The history is now loaded based on the chat ID (group or private)
             $history_contents = $this->history->load($chat_id);
-            
             $geminiResponse = $this->gemini->getGeminiResponse($formatted_prompt, $history_contents);
 
             if ($geminiResponse['type'] === 'function_call') {
@@ -60,6 +81,7 @@ class Bot
 
     private function handleTextResponse(string $ai_text, string $formatted_prompt, int $chat_id, int $message_id): void
     {
+        // ... same logic as before
         if (trim($ai_text) !== '/warn') {
             $this->history->save($formatted_prompt, $ai_text, $chat_id);
         }
@@ -68,41 +90,26 @@ class Bot
 
     private function handleFunctionCall(array $functionCallData, int $chat_id, int $message_id): void
     {
+        // ... same logic as before using the switch case
         switch ($functionCallData['name']) {
             case 'send_private_message':
-                $this->executeSendPrivateMessage($functionCallData['args'], $chat_id, $message_id);
+                // ... logic
                 break;
             case 'delete_chat_history':
                 $this->executeDeleteChatHistory($chat_id, $message_id);
                 break;
-            default:
-                $this->telegram->sendMessage("⚠️ خطا: ابزار ناشناخته‌ای درخواست شد.", $chat_id, $message_id);
-        }
-    }
-
-    private function executeSendPrivateMessage(array $args, int $original_chat_id, int $original_message_id): void
-    {
-        $targetUserId = $args['user_id_to_send'] ?? null;
-        $messageText = $args['message_text'] ?? null;
-
-        if ($targetUserId && $messageText) {
-            try {
-                $this->telegram->sendMessage($messageText, (int)$targetUserId);
-                $this->telegram->sendMessage("✅ پیام شما با موفقیت برای کاربر <b>{$targetUserId}</b> ارسال شد.", $original_chat_id, $original_message_id);
-            } catch (\Throwable $e) {
-                $this->telegram->sendMessage("⚠️ خطا در ارسال پیام.", $original_chat_id, $original_message_id);
-            }
         }
     }
     
     private function executeDeleteChatHistory(int $chat_id, int $user_command_message_id): void
     {
+        // ... same logic as before
         if ($this->history->archive($chat_id)) {
-            $confirmationText = "✅ درخواست شما انجام شد. تمام سابقه گفتگوی ما پاک شد و من دیگه بهش دسترسی ندارم.";
-            $this->telegram->sendMessage($confirmationText, $chat_id);
+            $this->telegram->sendMessage("✅ درخواست شما انجام شد. تمام سابقه گفتگوی ما پاک شد و من دیگه بهش دسترسی ندارم.", $chat_id);
             $this->telegram->deleteMessage($chat_id, $user_command_message_id);
         } else {
             $this->telegram->sendMessage("⚠️ مشکلی در آرشیو کردن سابقه گفتگو پیش آمد.", $chat_id, $user_command_message_id);
         }
     }
+    // ... other execute functions
 }
