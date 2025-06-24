@@ -73,10 +73,18 @@ class Bot
             } else {
                 $this->handleTextResponse($geminiResponse['data'], $formatted_prompt, $chat_id, $message_id);
             }
-        } catch (\Throwable $e) {
-            error_log("--- PROCESSING ERROR ---: ChatID: $chat_id, UserID: {$user_info['id']}. Error: " . $e->getMessage());
-            $this->telegram->sendMessage("<b>متاسفم، یک خطای داخلی پیش اومد!</b>", $chat_id, $message_id);
         }
+            catch (\Throwable $e) {
+                $error_message = $e->getMessage();
+                // NEW: Add the problematic text to the log for easy debugging.
+                if (str_contains($error_message, "Telegram API error")) {
+                     error_log("--- PROCESSING ERROR ---: ChatID: $chat_id, UserID: {$user_info['id']}. Error: {$error_message}. Problematic Text: " . $geminiResponse['data'] ?? 'N/A');
+                } else {
+                     error_log("--- PROCESSING ERROR ---: ChatID: $chat_id, UserID: {$user_info['id']}. Error: " . $error_message);
+                }
+                $this->telegram->sendMessage("<b>متاسفم، یک خطای داخلی پیش اومد!</b>", $chat_id, $message_id);
+            }
+       
     }
 
     private function handleTextResponse(string $ai_text, string $formatted_prompt, int $chat_id, int $message_id): void
