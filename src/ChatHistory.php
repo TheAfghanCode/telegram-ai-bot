@@ -5,67 +5,44 @@ namespace AfghanCodeAI;
 
 class ChatHistory
 {
-    private string $filePath;
+    private string $historyDir;
     private int $maxLines;
 
-    public function __construct(string $filePath, int $maxLines)
+    public function __construct(string $historyDir, int $maxLines)
     {
-        $this->filePath = $filePath;
+        $this->historyDir = $historyDir;
         $this->maxLines = $maxLines;
+        if (!is_dir($this->historyDir)) {
+            mkdir($this->historyDir, 0755, true);
+        }
     }
 
-    /**
-     * Loads the history from the log file.
-     */
-    public function load(): array
+    private function getHistoryFilePath(int $userId): string
     {
-        if (!file_exists($this->filePath)) {
-            return [];
-        }
-        $lines = file($this->filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if ($lines === false) {
-            error_log("WARNING: Could not read chat history file: {$this->filePath}");
-            return [];
-        }
+        return "{$this->historyDir}/chat_{$userId}.log";
+    }
+
+    public function load(int $userId): array
+    {
+        $filePath = $this->getHistoryFilePath($userId);
+        if (!file_exists($filePath)) return [];
+        $lines = file($filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        return $lines ? array_filter(array_map(fn($line) => json_decode($line, true), $lines)) : [];
+    }
+
+    public function save(string $user_message, string $ai_response, int $userId): void
+    {
+        $filePath = $this->getHistoryFilePath($userId);
+        $all_lines = file_exists($filePath) ? file($filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
         
-        // Ensure that only valid JSON lines are processed and returned
-        return array_filter(array_map(function($line) {
-            return json_decode($line, true);
-        }, $lines));
-    }
+        $all_lines[] = json_encode(['role' => 'user', 'parts' => [['text' => $user_message]]]);
+        $all_lines[] = json_encode(['role' => 'model', 'parts' => [['text' => $ai_response]]]);
 
-    /**
-     * Saves a new user message and AI response to the history file.
-     */
-    public function save(string $user_message, string $ai_response): void
-    {
-        $user_entry = json_encode(['role' => 'user', 'parts' => [['text' => $user_message]]]);
-        $model_entry = json_encode(['role' => 'model', 'parts' => [['text' => $ai_response]]]);
-
-        $all_lines = $this->loadRawLines();
-        $all_lines[] = $user_entry;
-        $all_lines[] = $model_entry;
-
-        // Trim the history if it exceeds the max line count
-        if (count($all_lines) > $this->maxLines) {
+        // --- NEW: Check for unlimited history flag ---
+        if (count($all_lines) > $this->maxLines && !UNLIMITED_HISTORY) {
             $all_lines = array_slice($all_lines, -$this->maxLines);
         }
 
-        // Use LOCK_EX to prevent race conditions during concurrent writes
-        $result = file_put_contents($this->filePath, implode(PHP_EOL, $all_lines) . PHP_EOL, LOCK_EX);
-        if ($result === false) {
-            error_log("ERROR: Failed to write to chat history file: {$this->filePath}");
-        }
-    }
-
-    /**
-     * Reads raw lines from the file, used internally by the save method.
-     */
-    private function loadRawLines(): array
-    {
-        if (!file_exists($this->filePath)) {
-            return [];
-        }
-        return file($this->filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+        file_put_contents($filePath, implode(PHP_EOL, $all_lines) . PHP_EOL, LOCK_EX);
     }
 }

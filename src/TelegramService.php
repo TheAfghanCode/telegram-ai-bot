@@ -1,6 +1,5 @@
 <?php
 // src/TelegramService.php
-
 namespace AfghanCodeAI;
 
 class TelegramService
@@ -14,42 +13,56 @@ class TelegramService
         $this->apiUrl = "https://api.telegram.org/bot$botToken";
     }
 
-    /**
-     * Sends a message using the Telegram Bot API.
-     * Note: This function does NOT escape HTML characters in $messageText.
-     * It trusts that the input is already correctly formatted by the AI
-     * as per Telegram's HTML styling rules.
-     */
-    public function sendMessage(string $messageText, int $chatID, ?int $replyToMessageId = null, ?string $parseMode = null): void
+    public function sendMessage(string $messageText, int $chatID, ?int $replyToMessageId = null, ?string $parseMode = 'HTML'): void
     {
-        $url = "{$this->apiUrl}/sendMessage";
-        $queryParams = [
+        $this->sendRequest('sendMessage', [
             'chat_id' => $chatID,
             'text' => $messageText,
-        ];
-        if ($replyToMessageId !== null) {
-            $queryParams['reply_to_message_id'] = $replyToMessageId;
-        }
-        if ($parseMode !== null) {
-            $queryParams['parse_mode'] = $parseMode;
-        }
+            'reply_to_message_id' => $replyToMessageId,
+            'parse_mode' => $parseMode,
+        ]);
+    }
 
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $queryParams);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    /**
+     * NEW: Deletes a message in a chat.
+     */
+    public function deleteMessage(int $chatId, int $messageId): void
+    {
+        try {
+            $this->sendRequest('deleteMessage', [
+                'chat_id' => $chatId,
+                'message_id' => $messageId,
+            ]);
+            error_log("INFO: Successfully deleted message {$messageId} from chat {$chatId}.");
+        } catch (\Throwable $e) {
+            // It's okay if deletion fails (e.g., message too old, no permission). We just log it.
+            error_log("WARNING: Could not delete message {$messageId} from chat {$chatId}. Reason: " . $e->getMessage());
+        }
+    }
+    
+    /**
+     * A generic method to send requests to the Telegram API.
+     */
+    private function sendRequest(string $method, array $params): array
+    {
+        $url = "{$this->apiUrl}/{$method}";
+        
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $params,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 10,
+        ]);
+
         $response = curl_exec($ch);
         $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-
+        
         if ($http_code !== 200) {
-            // Log detailed error from the Telegram API for debugging
-            error_log("--- TELEGRAM API ERROR ---: HTTP Code: $http_code | Response: $response | Parse Mode: $parseMode");
-        } else {
-            error_log("INFO: Message sent to Telegram successfully. ChatID: $chatID");
+            throw new \Exception("Telegram API error for method {$method}. Code: {$http_code}, Response: {$response}");
         }
+
+        return json_decode($response, true);
     }
 }
