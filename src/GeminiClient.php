@@ -2,19 +2,24 @@
 // src/GeminiClient.php
 namespace AfghanCodeAI;
 
+/**
+ * =================================================================
+ * AfghanCodeAI - Gemini AI Client
+ * =================================================================
+ * This class is the sole point of contact with the Google Gemini API.
+ * It is now simpler as it no longer manages public memory itself.
+ */
 class GeminiClient
 {
     private string $apiKey;
     private array $promptTemplate;
     private string $apiUrl;
     private array $tools;
-    private string $publicMemoryPath;
 
-    public function __construct(string $apiKey, string $templatePath, string $publicMemoryPath)
+    public function __construct(string $apiKey, string $templatePath)
     {
         $this->apiKey = $apiKey;
         $this->apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' . $this->apiKey;
-        $this->publicMemoryPath = $publicMemoryPath;
         $this->loadTemplate($templatePath);
         $this->defineTools();
     }
@@ -24,55 +29,18 @@ class GeminiClient
         $this->tools = [
             [
                 'functionDeclarations' => [
-                    // Tool 1: Send Private Message
-                    [
-                        'name' => 'send_private_message',
-                        'description' => 'Sends a direct private message to a specified user.',
-                        'parameters' => [
-                            'type' => 'OBJECT',
-                            'properties' => [
-                                'user_id_to_send' => ['type' => 'NUMBER', 'description' => 'The numeric Telegram user ID.'],
-                                'message_text' => ['type' => 'STRING', 'description' => 'The message content.']
-                            ],
-                            'required' => ['user_id_to_send', 'message_text']
-                        ]
-                    ],
-                    // Tool 2: Delete Chat History
-                    [
-                        'name' => 'delete_chat_history',
-                        'description' => 'Deletes the current conversation history for the user or group.',
-                        'parameters' => [
-                            'type' => 'OBJECT', 
-                            'properties' => new \stdClass() // Correctly uses an empty object
-                        ]
-                    ]
+                    ['name' => 'send_private_message', 'description' => 'Sends a private message.', 'parameters' => ['type' => 'OBJECT','properties' => ['user_id_to_send' => ['type' => 'NUMBER'],'message_text' => ['type' => 'STRING']],'required' => ['user_id_to_send', 'message_text']]],
+                    ['name' => 'delete_chat_history', 'description' => 'Deletes the conversation history.','parameters' => ['type' => 'OBJECT', 'properties' => new \stdClass()]]
                 ]
             ]
         ];
     }
-    
-    private function loadPublicMemory(): array
-    {
-        if (!file_exists($this->publicMemoryPath)) {
-            return [];
-        }
-        $publicInstructions = [];
-        $lines = file($this->publicMemoryPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        foreach ($lines as $line) {
-            $publicInstructions[] = ['role' => 'user', 'parts' => [['text' => "قانون عمومی و همیشگی: " . $line]]];
-            $publicInstructions[] = ['role' => 'model', 'parts' => [['text' => "قانون عمومی دریافت شد و اجرا می‌شود."]]];
-        }
-        return $publicInstructions;
-    }
 
-    public function getGeminiResponse(string $prompt, array $history_contents): array
+    public function getGeminiResponse(array $full_context): array
     {
-        $base_contents = $this->promptTemplate['contents'];
-        $public_memory = $this->loadPublicMemory();
-        $final_contents = array_merge($base_contents, $public_memory, $history_contents, [['role' => 'user', 'parts' => [['text' => $prompt]]]]);
-        
         $data = $this->promptTemplate;
-        $data['contents'] = $final_contents;
+        // The bot now constructs the full context and passes it here.
+        $data['contents'] = $full_context;
         $data['tools'] = $this->tools;
         
         $jsonData = json_encode($data);
@@ -92,7 +60,9 @@ class GeminiClient
         error_log("INFO: Received response from Gemini.");
 
         if (curl_errno($ch)) { 
-            throw new \Exception("cURL Error: " . curl_error($ch)); 
+            $error = curl_error($ch);
+            curl_close($ch);
+            throw new \Exception("cURL Error: " . $error); 
         }
         curl_close($ch);
         

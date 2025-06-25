@@ -2,9 +2,11 @@
 // ai-webhook-api-tg.php
 
 /**
- * Main entry point for the Telegram webhook.
- * This file is responsible for receiving the request, loading all configurations and classes,
- * instantiating all services, and executing the main bot logic.
+ * =================================================================
+ * AfghanCodeAI - Main Webhook Entry Point
+ * =================================================================
+ * This file receives all incoming updates from Telegram, loads the
+ * application, and triggers the main bot logic.
  */
 
 // Give the script up to 2 minutes to run to prevent timeouts on slow AI responses.
@@ -19,10 +21,10 @@ error_reporting(E_ALL);
 // Set header
 header('Content-Type: text/html; charset=utf-8');
 
-// Load all required files in the correct order
+// --- Load Application Core ---
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/src/TelegramService.php';
-require_once __DIR__ . '/src/LoggerService.php'; // The new Logger
+require_once __DIR__ . '/src/LoggerService.php';
 require_once __DIR__ . '/src/ChatHistory.php';
 require_once __DIR__ . '/src/GeminiClient.php';
 require_once __DIR__ . '/src/Bot.php';
@@ -35,26 +37,22 @@ use AfghanCodeAI\ChatHistory;
 use AfghanCodeAI\LoggerService;
 
 try {
-    // 1. Instantiate ChatHistory (which connects to the PostgreSQL database)
-    $chatHistory = new ChatHistory(MAX_HISTORY_LINES);
-    
-    // 2. Instantiate TelegramService
+    // --- Dependency Injection Container ---
+    // 1. Instantiate services with no dependencies first.
     $telegramService = new TelegramService(BOT_TOKEN);
     
-    // 3. Instantiate the new central LoggerService
-    $logger = new LoggerService(BOT_TOKEN, LOG_CHANNEL_ADMIN, LOG_CHANNEL_USER, LOG_CHANNEL_ALL, LOG_CHANNEL_SYSTEM);
+    // 2. Instantiate services that depend on the first group.
+    $logger = new LoggerService(BOT_TOKEN, LOG_CHANNEL_ADMIN, LOG_CHANNEL_USER, LOG_CHANNEL_ALL, LOG_CHANNEL_SYSTEM, LOG_CHANNEL_ARCHIVE);
+    $chatHistory = new ChatHistory(MAX_HISTORY_LINES, $telegramService, $logger);
+    $geminiClient = new GeminiClient(GEMINI_API_KEY, PROMPT_TEMPLATE_PATH);
     
-    // 4. Instantiate GeminiClient, providing the public memory file path
-    $geminiClient = new GeminiClient(GEMINI_API_KEY, PROMPT_TEMPLATE_PATH, PUBLIC_MEMORY_FILE);
-    
-    // 5. Instantiate the main Bot, injecting all services as dependencies
+    // 3. Instantiate the main Bot, injecting all required services.
     $bot = new Bot($telegramService, $geminiClient, $chatHistory, $logger);
     
-    // 6. Handle the incoming update from Telegram
+    // 4. Handle the incoming update from Telegram.
     $bot->handleUpdate();
 
 } catch (Throwable $e) {
-    // Catch any uncaught exception and log it to the main error file.
     // This is the last line of defense for critical failures.
     error_log("--- FATAL UNHANDLED ERROR ---: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
 }

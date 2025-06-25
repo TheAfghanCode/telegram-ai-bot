@@ -1,13 +1,23 @@
 <?php
 // config.php
 
+/**
+ * =================================================================
+ * AfghanCodeAI - Central Configuration File
+ * =================================================================
+ * This file defines all constants and settings for the application.
+ * It's the single source of truth for all configuration.
+ */
+
 // --- Core Secrets (loaded from Render Environment) ---
 define('BOT_TOKEN', getenv('BOT_TOKEN'));
 define('GEMINI_API_KEY', getenv('GEMINI_API_KEY'));
 define('DATABASE_URL', getenv('DATABASE_URL')); 
+define('BOT_USERNAME', getenv('BOT_USERNAME')); // e.g., 'AfghanCodeAI_bot'
 
-if (!BOT_TOKEN || !GEMINI_API_KEY || !DATABASE_URL) { 
-    die('FATAL: Required environment variables (BOT_TOKEN, GEMINI_API_KEY, DATABASE_URL) are not set.'); 
+// --- Critical Environment Check ---
+if (!BOT_TOKEN || !GEMINI_API_KEY || !DATABASE_URL || !BOT_USERNAME) { 
+    die('FATAL: Required environment variables (BOT_TOKEN, GEMINI_API_KEY, DATABASE_URL, BOT_USERNAME) are not set.'); 
 }
 
 // --- Parse Database URL into individual components ---
@@ -24,14 +34,13 @@ if (!DB_HOST || !DB_NAME || !DB_USER) {
 
 // --- File-based constants ---
 define('PROMPT_TEMPLATE_PATH', __DIR__ . '/prompt_template.json');
-// Public memory can still be a file for simplicity
-define('PUBLIC_MEMORY_FILE', __DIR__ . '/public_memory.log');
 
-// --- Admin & Monitoring ---
+// --- Admin & Monitoring Configuration ---
 define('ADMIN_USER_ID', 5133232659);
-define('MONITORED_USER_ID', '5826521137'); // Replace with a numeric ID
+define('MONITORED_USER_ID', '5826521137');
 
-// --- Logging Channels ---
+// --- Telegram Logging & Archive Channels ---
+define('LOG_CHANNEL_ARCHIVE', '-1002244335566'); //  شناسه کانال آرشیو را اینجا قرار بده
 define('LOG_CHANNEL_ADMIN', '-1002655189872');
 define('LOG_CHANNEL_USER', '-1002628189099');
 define('LOG_CHANNEL_ALL', '-1002762407682');
@@ -39,4 +48,4 @@ define('LOG_CHANNEL_SYSTEM', '-1002781326891');
 
 // --- Application Settings ---
 define('MAX_HISTORY_LINES', 40);
-define('UNLIMITED_HISTORY', false);
+define('UNLIMITED_HISTORY', true);

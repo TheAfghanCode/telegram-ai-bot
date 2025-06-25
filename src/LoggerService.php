@@ -1,102 +1,64 @@
 <?php
-// src/LoggerService.php
+// src/TelegramService.php
 namespace AfghanCodeAI;
 
 /**
- * A dedicated service for sending logs to specific Telegram channels.
- * It uses its own simple cURL function to avoid dependency loops with TelegramService.
+ * =================================================================
+ * AfghanCodeAI - Telegram Messenger Service
+ * =================================================================
+ * A simple and direct messenger for the Telegram API. Its only job is
+ * to send requests. It throws exceptions on failure, letting the Bot
+ * class handle errors and retry logic.
  */
-class LoggerService
+class TelegramService
 {
-    private string $botToken;
-    private string $adminChannelId;
-    private string $userChannelId;
-    private string $allChannelId;
-    private string $systemChannelId;
+    private string $apiUrl;
 
-    public function __construct(string $botToken, string $adminChannelId, string $userChannelId, string $allChannelId, string $systemChannelId)
+    public function __construct(string $botToken)
     {
-        $this->botToken = $botToken;
-        $this->adminChannelId = $adminChannelId;
-        $this->userChannelId = $userChannelId;
-        $this->allChannelId = $allChannelId;
-        $this->systemChannelId = $systemChannelId;
+        $this->apiUrl = "https://api.telegram.org/bot$botToken";
     }
 
-    /**
-     * Logs system-level messages (errors, info, warnings) to the system channel.
-     */
-    public function logSystem(string $message, string $level = 'INFO'): void
+    public function sendMessage(string $messageText, int $chatID, ?int $replyToMessageId = null, ?string $parseMode = 'HTML'): void
     {
-        $timestamp = date('Y-m-d H:i:s T');
-        $formattedMessage = "<b>[{$level}]</b>\n";
-        $formattedMessage .= "<code>{$timestamp}</code>\n\n";
-        $formattedMessage .= "<pre>" . htmlspecialchars($message) . "</pre>";
-
-        $this->sendToChannel($this->systemChannelId, $formattedMessage);
+        $this->sendRequest('sendMessage', ['chat_id' => $chatID, 'text' => $messageText, 'reply_to_message_id' => $replyToMessageId, 'parse_mode' => $parseMode]);
     }
 
-    /**
-     * Logs a user-bot conversation turn to the appropriate channels.
-     */
-    public function logChat(array $userInfo, string $userMessage, string $botResponse): void
+    public function deleteMessage(int $chatId, int $messageId): void
     {
-        $logData = [
-            'timestamp' => date('c'),
-            'user' => [
-                'id' => $userInfo['id'],
-                'first_name' => $userInfo['first_name'],
-                'username' => $userInfo['username']
-            ],
-            'conversation' => [
-                'user_says' => $userMessage,
-                'bot_responds' => $botResponse
-            ]
-        ];
-
-        $jsonLog = json_encode($logData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-        $formattedMessage = "<code>" . htmlspecialchars($jsonLog) . "</code>";
-
-        // Send to the "all chats" log channel
-        $this->sendToChannel($this->allChannelId, $formattedMessage);
-
-        // Send to the admin's log channel if the user is the admin
-        if ($userInfo['id'] == ADMIN_USER_ID) {
-            $this->sendToChannel($this->adminChannelId, $formattedMessage);
-        }
-
-        // Send to the specific user's log channel if the user is the one being monitored
-        if (defined('MONITORED_USER_ID') && $userInfo['id'] == MONITORED_USER_ID) {
-            $this->sendToChannel($this->userChannelId, $formattedMessage);
+        try {
+            $this->sendRequest('deleteMessage', ['chat_id' => $chatId, 'message_id' => $messageId]);
+        } catch (\Throwable $e) {
+            error_log("WARNING: Could not delete message {$messageId}. Reason: " . $e->getMessage());
         }
     }
 
-    /**
-     * A simple, self-contained cURL function to send log messages.
-     * Fire-and-forget approach with short timeouts.
-     */
-    private function sendToChannel(string $channelId, string $message): void
+    public function sendDocument(int $chatId, string $filePath, string $caption = ''): void
     {
-        if (empty($channelId) || str_contains($channelId, 'YOUR_')) {
-            return; // Don't send if channel ID is not set
-        }
-
-        $url = "https://api.telegram.org/bot{$this->botToken}/sendMessage";
-        $params = [
-            'chat_id' => $channelId,
-            'text' => $message,
-            'parse_mode' => 'HTML',
-        ];
-
+        $this->sendRequest('sendDocument', ['chat_id' => $chatId, 'caption' => $caption, 'document' => new \CURLFile($filePath)], false);
+    }
+    
+    private function sendRequest(string $method, array $params, bool $isJson = true): array
+    {
+        $url = "{$this->apiUrl}/{$method}";
         $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $params,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 5, // Short timeout for logging
-            CURLOPT_CONNECTTIMEOUT => 2,
-        ]);
-        curl_exec($ch);
+        
+        $options = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30];
+        $options[CURLOPT_POST] = true;
+        $options[CURLOPT_POSTFIELDS] = $isJson ? json_encode($params) : $params;
+        if($isJson) {
+            $options[CURLOPT_HTTPHEADER] = ['Content-Type: application/json'];
+        }
+        
+        curl_setopt_array($ch, $options);
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+        
+        if ($http_code !== 200 || $response === false) {
+            throw new \Exception("Telegram API error for {$method}. Code: {$http_code}, Response: " . ($response ?: 'No response'));
+        }
+
+        return json_decode($response, true) ?? [];
     }
 }
