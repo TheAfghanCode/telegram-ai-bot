@@ -46,7 +46,7 @@ define('MONITORED_USER_ID', '5826521137');
 
 // --- NEW: Archive Channel ---
 // This is where the zipped history files will be sent.
-define('LOG_CHANNEL_ARCHIVE', 'YOUR_ARCHIVE_CHANNEL_ID');
+define('LOG_CHANNEL_ARCHIVE', '-1002768477983');
 
 // --- Telegram Logging & Archive Channels ---
 define('LOG_CHANNEL_ARCHIVE', '-1002244335566'); //  شناسه کانال آرشیو را اینجا قرار بده
