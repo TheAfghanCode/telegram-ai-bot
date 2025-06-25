@@ -35,9 +35,18 @@ if (!DB_HOST || !DB_NAME || !DB_USER) {
 // --- File-based constants ---
 define('PROMPT_TEMPLATE_PATH', __DIR__ . '/prompt_template.json');
 
+// --- NEW & CRITICAL: Central Security Key ---
+// This key protects both backup_manager.php and admin_panel.php
+// IMPORTANT: Change this to a long, random, and secret string!
+define('ADMIN_SECRET_KEY', 'developer.alisina@Ali.1151494');
+
 // --- Admin & Monitoring Configuration ---
 define('ADMIN_USER_ID', 5133232659);
 define('MONITORED_USER_ID', '5826521137');
+
+// --- NEW: Archive Channel ---
+// This is where the zipped history files will be sent.
+define('LOG_CHANNEL_ARCHIVE', 'YOUR_ARCHIVE_CHANNEL_ID');
 
 // --- Telegram Logging & Archive Channels ---
 define('LOG_CHANNEL_ARCHIVE', '-1002244335566'); //  شناسه کانال آرشیو را اینجا قرار بده

@@ -3,49 +3,36 @@
 
 /**
  * =================================================================
- * AfghanCodeAI - Disaster Recovery & Backup Manager
+ * AfghanCodeAI - Disaster Recovery & Backup Manager (Final Secure Version)
  * =================================================================
  * This script provides a secure way to download a complete backup
  * of the bot's memory from the PostgreSQL database.
- * * --- HOW TO USE ---
- * 1. Place this file in the root directory of your project.
- * 2. Set a strong, secret key in the 'BACKUP_SECRET_KEY' constant below.
- * 3. Access this script via your browser with the secret key as a query parameter:
- * https://your-service.onrender.com/backup_manager.php?secret=YOUR_SECRET_KEY_HERE
- *
- * --- WHAT IT DOES ---
- * 1. Verifies the secret key.
- * 2. Dumps the 'chat_history' and 'global_settings' tables from PostgreSQL.
- * 3. Organizes the data into structured JSON files for easy restoration.
- * 4. Compresses everything into a single, timestamped .zip file.
- * 5. Forces the browser to download the .zip file.
- * 6. Cleans up all temporary files from the server.
+ * SECURITY: Access is now protected by the central ADMIN_SECRET_KEY from config.php.
  */
 
-// --- SECURITY GATEKEEPER ---
-// IMPORTANT: Change this to a long, random, and secret string!
-define('BACKUP_SECRET_KEY', 'abcdefghijklmnopqrstuvwxyz');
+// --- INITIALIZATION & SECURITY ---
 
-if (!isset($_GET['secret']) || $_GET['secret'] !== BACKUP_SECRET_KEY) {
+// Load the main configuration file to get database credentials AND the secret key.
+require_once __DIR__ . '/config.php';
+
+// --- Security Gatekeeper ---
+// It now uses the central secret key defined in config.php.
+if (!defined('ADMIN_SECRET_KEY') || !isset($_GET['secret']) || $_GET['secret'] !== ADMIN_SECRET_KEY) {
     header('HTTP/1.1 403 Forbidden');
-    die('Access Denied.');
+    die('Access Denied. Please provide the correct secret key in the URL (e.g., ?secret=YOUR_KEY).');
 }
 
-// --- INITIALIZATION ---
 // Give the script enough time to process potentially large databases.
 set_time_limit(300);
-
-// Load the application configuration to get database credentials.
-require_once __DIR__ . '/config.php';
 
 // Check if the ZipArchive class exists.
 if (!class_exists('ZipArchive')) {
     die('Error: ZipArchive class is not installed on this server. Please enable the PHP zip extension in your Dockerfile.');
 }
 
+// --- Database Connection ---
 $pdo = null;
 try {
-    // Establish a connection to the PostgreSQL database.
     $dsn = sprintf('pgsql:host=%s;port=%d;dbname=%s;user=%s;password=%s', DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS);
     $pdo = new \PDO($dsn, null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
 } catch (\PDOException $e) {
