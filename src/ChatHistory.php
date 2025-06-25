@@ -4,7 +4,7 @@ namespace AfghanCodeAI;
 
 /**
  * =================================================================
- * AfghanCodeAI - Persistent History Service
+ * AfghanCodeAI - Persistent History Service (Final Complete Version)
  * =================================================================
  * Manages conversation history using a PostgreSQL database. It also handles
  * the "Digital Time Capsule" archiving feature.
@@ -33,16 +33,20 @@ class ChatHistory
             $dsn = sprintf('pgsql:host=%s;port=%d;dbname=%s;user=%s;password=%s', DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS);
             $this->pdo = new \PDO($dsn, null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
         } catch (\PDOException $e) {
-            error_log("Failed to connect to PostgreSQL: " . $e->getMessage());
+            $this->logger->logSystem("Failed to connect to PostgreSQL: " . $e->getMessage(), "FATAL");
             $this->pdo = null;
         }
     }
 
     private function ensureTablesExist(): void
     {
-        $this->pdo->exec("CREATE TABLE IF NOT EXISTS chat_history (id SERIAL PRIMARY KEY, chat_id BIGINT NOT NULL, role VARCHAR(10) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW());");
-        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_chat_id_timestamp ON chat_history (chat_id, created_at);");
-        $this->pdo->exec("CREATE TABLE IF NOT EXISTS global_settings (id SERIAL PRIMARY KEY, rule TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW());");
+        try {
+            $this->pdo->exec("CREATE TABLE IF NOT EXISTS chat_history (id SERIAL PRIMARY KEY, chat_id BIGINT NOT NULL, role VARCHAR(10) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW());");
+            $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_chat_id_timestamp ON chat_history (chat_id, created_at);");
+            $this->pdo->exec("CREATE TABLE IF NOT EXISTS global_settings (id SERIAL PRIMARY KEY, rule TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW());");
+        } catch (\PDOException $e) {
+            $this->logger->logSystem("Failed to create necessary tables: " . $e->getMessage(), "FATAL");
+        }
     }
 
     public function loadGlobalSettings(): array
@@ -76,42 +80,76 @@ class ChatHistory
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([$chatId, 'user', $user_message_with_context]);
         $stmt->execute([$chatId, 'model', $ai_response]);
-        if (defined('UNLIMITED_HISTORY') && !UNLIMITED_HISTORY) $this->trimHistory($chatId);
+        if (defined('UNLIMITED_HISTORY') && !UNLIMITED_HISTORY) {
+            $this->trimHistory($chatId);
+        }
     }
 
     private function trimHistory(int $chatId): void
     {
-        // ... (trim logic is unchanged)
+        if (!$this->pdo) return;
+        try {
+            $countSql = "SELECT COUNT(*) FROM chat_history WHERE chat_id = ?";
+            $stmt = $this->pdo->prepare($countSql);
+            $stmt->execute([$chatId]);
+            $count = (int)$stmt->fetchColumn();
+
+            if ($count > $this->maxLines) {
+                $limit = $count - $this->maxLines;
+                $deleteSql = "DELETE FROM chat_history WHERE id IN (
+                                SELECT id FROM chat_history 
+                                WHERE chat_id = ? 
+                                ORDER BY created_at ASC 
+                                LIMIT ?
+                              )";
+                $deleteStmt = $this->pdo->prepare($deleteSql);
+                $deleteStmt->execute([$chatId, $limit]);
+            }
+        } catch (\PDOException $e) {
+            $this->logger->logSystem("Failed to trim history for chat {$chatId}: " . $e->getMessage(), "ERROR");
+        }
     }
     
     public function archive(int $chatId): bool
     {
-        if (!$this->pdo) return false;
+        if (!$this->pdo) {
+            $this->logger->logSystem("Archive failed for chat {$chatId}: No database connection.", "ERROR");
+            return false;
+        }
         
         $history = $this->load($chatId);
-        if (empty($history)) return true;
+        if (empty($history)) {
+            $this->logger->logSystem("Archive for chat {$chatId} skipped: History is empty.", "INFO");
+            return true;
+        }
 
         $jsonData = json_encode($history, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
         $tmpJsonPath = tempnam(sys_get_temp_dir(), 'archive_') . '.json';
         file_put_contents($tmpJsonPath, $jsonData);
-
+        
         $zip = new \ZipArchive();
         $tmpZipPath = $tmpJsonPath . '.zip';
-        if ($zip->open($tmpZipPath, \ZipArchive::CREATE) !== TRUE) { unlink($tmpJsonPath); return false; }
+        if ($zip->open($tmpZipPath, \ZipArchive::CREATE) !== TRUE) {
+            $this->logger->logSystem("Archive failed: Could not create ZIP file for chat {$chatId}.", "FATAL");
+            unlink($tmpJsonPath);
+            return false;
+        }
         $zip->addFile($tmpJsonPath, "chat_{$chatId}_history.json");
         $zip->close();
+        
+        $caption = "Archive for Chat ID: {$chatId} on " . date('Y-m-d H:i:s');
+        $uploadSuccess = $this->telegram->sendDocument(LOG_CHANNEL_ARCHIVE, $tmpZipPath, $caption);
 
-        try {
-            $caption = "Archive for Chat ID: {$chatId} on " . date('Y-m-d H:i:s');
-            $this->telegram->sendDocument(LOG_CHANNEL_ARCHIVE, $tmpZipPath, $caption);
-        } catch (\Throwable $e) {
-            $this->logger->logSystem("Failed to upload archive for chat {$chatId}: " . $e->getMessage(), "FATAL");
-            unlink($tmpJsonPath); unlink($tmpZipPath); return false;
+        unlink($tmpJsonPath);
+        unlink($tmpZipPath);
+
+        if ($uploadSuccess) {
+            $this->logger->logSystem("Archive for chat {$chatId} successfully uploaded. Deleting from DB.", "INFO");
+            $stmt = $this->pdo->prepare("DELETE FROM chat_history WHERE chat_id = ?");
+            return $stmt->execute([$chatId]);
+        } else {
+            $this->logger->logSystem("CRITICAL ARCHIVE FAILURE for chat {$chatId}: Could not upload file. Data NOT deleted.", "FATAL");
+            return false;
         }
-
-        unlink($tmpJsonPath); unlink($tmpZipPath);
-
-        $stmt = $this->pdo->prepare("DELETE FROM chat_history WHERE chat_id = ?");
-        return $stmt->execute([$chatId]);
     }
 }
