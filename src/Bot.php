@@ -3,9 +3,10 @@
 namespace AfghanCodeAI;
 
 /**
- * The main brain of the bot.
- * It orchestrates all operations: receiving updates, processing messages,
- * handling admin commands, and delegating tasks to other services.
+ * =================================================================
+ * AfghanCodeAI - The Bot's Brain (Final Corrected Version)
+ * =================================================================
+ * This is the master orchestrator, handling all logic and delegating tasks.
  */
 class Bot
 {
@@ -33,15 +34,19 @@ class Bot
             $user_id = $message['from']['id'];
             $user_message = $message['text'];
             
+            $isGroupChat = $chat_id < 0;
+            $botUsername = str_replace('@', '', BOT_USERNAME); 
+            if ($isGroupChat && !str_contains($user_message, '@' . $botUsername)) {
+                return; // Silent exit if not mentioned in a group
+            }
+            
             $user_info = ['id' => $user_id, 'first_name' => $message['from']['first_name'] ?? '', 'username' => $message['from']['username'] ?? 'N/A'];
 
-            // --- Admin Command Gatekeeper ---
             if (defined('ADMIN_USER_ID') && $user_id === ADMIN_USER_ID && str_starts_with($user_message, 'دستور عمومی:')) {
                 $this->handleAdminCommand($user_message, $chat_id, $message['message_id']);
-                return; // Stop further processing for admin commands
+                return;
             }
 
-            // --- Normal Message Processing ---
             $this->processMessage($chat_id, $user_message, $message['message_id'], $user_info);
         }
     }
@@ -51,9 +56,9 @@ class Bot
         $instruction = trim(str_replace('دستور عمومی:', '', $raw_command));
         $responseText = "⚠️ دستور عمومی نمی‌تواند خالی باشد.";
 
-        if (!empty($instruction) && defined('PUBLIC_MEMORY_FILE')) {
-            file_put_contents(PUBLIC_MEMORY_FILE, $instruction . PHP_EOL, FILE_APPEND | LOCK_EX);
-            $responseText = "✅ دستور عمومی با موفقیت ثبت شد و از این پس برای تمام کاربران اعمال می‌شود.";
+        if (!empty($instruction)) {
+            $this->history->saveGlobalSetting($instruction);
+            $responseText = "✅ دستور عمومی با موفقیت در دیتابیس ثبت شد.";
             $this->logger->logSystem("Admin command executed: {$instruction}", "ADMIN");
         }
         
@@ -63,17 +68,39 @@ class Bot
     private function processMessage(int $chat_id, string $user_message, int $message_id, array $user_info): void
     {
         try {
-            $formatted_prompt = "[User: {$user_info['first_name']} (Username: @{$user_info['username']}, ID: {$user_info['id']})] says:\n{$user_message}";
-            $history_contents = $this->history->load($chat_id);
-            $geminiResponse = $this->gemini->getGeminiResponse($formatted_prompt, $history_contents);
+            // --- THE FIX IS HERE: Assembling the full context array correctly ---
+            
+            // 1. Load the base prompt from the template file
+            $base_prompt = json_decode(file_get_contents(PROMPT_TEMPLATE_PATH), true)['contents'];
+            
+            // 2. Load global rules from the database
+            $global_settings_raw = $this->history->loadGlobalSettings();
+            $global_settings_context = [];
+            foreach ($global_settings_raw as $rule) {
+                $global_settings_context[] = ['role' => 'user', 'parts' => [['text' => "قانون عمومی و همیشگی: " . $rule]]];
+                $global_settings_context[] = ['role' => 'model', 'parts' => [['text' => "قانون عمومی دریافت شد و اجرا می‌شود."]]];
+            }
+            
+            // 3. Load the personal/group history from the database
+            $personal_history = $this->history->load($chat_id);
+            
+            // 4. Format the current user's prompt
+            $current_prompt_string = "[User: {$user_info['first_name']} (Username: @{$user_info['username']}, ID: {$user_info['id']})] says:\n{$user_message}";
+            $current_prompt_array = [['role' => 'user', 'parts' => [['text' => $current_prompt_string]]]];
+            
+            // 5. Merge everything into a single, complete context array
+            $full_context = array_merge($base_prompt, $global_settings_context, $personal_history, $current_prompt_array);
+            
+            // 6. Call Gemini with the single, correct array argument
+            $geminiResponse = $this->gemini->getGeminiResponse($full_context);
 
             if ($geminiResponse['type'] === 'function_call') {
-                $this->logger->logSystem("Function call requested: {$geminiResponse['data']['name']}", 'DEBUG');
                 $this->handleFunctionCall($geminiResponse['data'], $chat_id, $message_id);
             } else {
                 $ai_text = $geminiResponse['data'];
                 $this->logger->logChat($user_info, $user_message, $ai_text);
-                $this->handleTextResponse($ai_text, $formatted_prompt, $chat_id, $message_id);
+                // Pass the original user message string for saving, not the full context
+                $this->handleTextResponse($ai_text, $current_prompt_string, $chat_id, $message_id);
             }
         } catch (\Throwable $e) {
             $logMessage = "FATAL PROCESSING ERROR in chat {$chat_id}\nError: {$e->getMessage()}\nTrace: {$e->getTraceAsString()}";
@@ -82,18 +109,16 @@ class Bot
         }
     }
 
-    private function handleTextResponse(string $ai_text, string $formatted_prompt, int $chat_id, int $message_id): void
+    private function handleTextResponse(string $ai_text, string $user_prompt, int $chat_id, int $message_id): void
     {
         try {
             if (trim($ai_text) !== '/warn') {
-                $this->history->save($formatted_prompt, $ai_text, $chat_id);
+                $this->history->save($user_prompt, $ai_text, $chat_id);
             }
             $this->telegram->sendMessage($ai_text, $chat_id, $message_id, 'HTML');
         } catch (\Exception $e) {
             $logMessage = "HTML SEND FAILED for chat {$chat_id}\nError: {$e->getMessage()}\nProblematic Text: [{$ai_text}]";
             $this->logger->logSystem($logMessage, 'ERROR');
-            
-            // Fallback attempt: send the message with all tags stripped.
             $this->telegram->sendMessage(strip_tags($ai_text), $chat_id, $message_id, null);
         }
     }
