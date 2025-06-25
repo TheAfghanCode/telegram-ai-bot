@@ -47,7 +47,7 @@ class LoggerService
         ];
 
         $jsonLog = json_encode($logData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-        $formattedMessage = "<code>" . htmlspecialchars($jsonLog) . "</code>";
+        $formattedMessage = "<code class=\"language-javascript\">" . htmlspecialchars($jsonLog) . "</code>";
 
         $this->sendToChannel($this->allChannelId, $formattedMessage);
         
