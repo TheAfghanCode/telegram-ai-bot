@@ -160,6 +160,7 @@ class Bot
     private function executeDeleteChatHistory(int $chat_id, int $user_command_message_id): void
     {
         if ($this->history->archive($chat_id)) {
+            $this->logger->logSystem("chat {$chatId}: Deleted Chat History.", "INFO");
             $confirmationText = "✅ درخواست شما انجام شد. تمام سابقه گفتگوی ما پاک شد و من دیگه بهش دسترسی ندارم.";
             $this->telegram->sendMessage($confirmationText, $chat_id);
             $this->telegram->deleteMessage($chat_id, $user_command_message_id);
