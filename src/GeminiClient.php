@@ -46,15 +46,24 @@ class GeminiClient
         // Overwrite the contents with the real, full conversation history
         $data['contents'] = $full_context;
 
-        // --- THE FIX IS HERE ---
-        // Get tools from the template (e.g., Google Search)
-        $templateTools = $this->promptTemplate['tools'] ?? []; 
-        // Get tools defined in this class (e.g., function calling)
-        $definedTools = $this->tools; 
+        // --- THE FINAL FIX IS HERE ---
+        // Get the content of the tool from the JSON template (e.g., google_search)
+        $templateToolContent = $this->promptTemplate['tools'][0] ?? []; 
+        // Get the content of the tool defined in PHP (e.g., function calling)
+        $definedToolContent = $this->tools[0] ?? []; 
 
-        // Merge both toolsets together instead of overwriting
-        $data['tools'] = array_merge($templateTools, $definedTools);
-        // --- END OF FIX ---
+        // Merge the *contents* of both tools into a single, large tool object
+        $mergedTool = array_merge($templateToolContent, $definedToolContent);
+
+        // If the merged tool is not empty, wrap it in an array as the final toolset
+        // This creates the correct structure: [ {tool1, tool2, ...} ]
+        if (!empty($mergedTool)) {
+            $data['tools'] = [$mergedTool];
+        } else {
+            // If no tools are defined anywhere, remove the key to avoid errors
+            unset($data['tools']);
+        }
+        // --- END OF FINAL FIX ---
 
         $jsonData = json_encode($data);
 
