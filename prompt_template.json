@@ -49,6 +49,11 @@
       ]
     }
   ],
+  "tools": [
+      {
+        "google_search": {}
+      }
+  ],
   "generationConfig": {
     "temperature": 0.8,
     "maxOutputTokens": 2048
