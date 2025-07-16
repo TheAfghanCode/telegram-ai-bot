@@ -4,10 +4,9 @@ namespace AfghanCodeAI;
 
 /**
  * =================================================================
- * AfghanCodeAI - Gemini AI Client
+ * AfghanCodeAI - Gemini AI Client (Final Corrected Version)
  * =================================================================
  * This class is the sole point of contact with the Google Gemini API.
- * It is now simpler as it no longer manages public memory itself.
  */
 class GeminiClient
 {
@@ -19,20 +18,37 @@ class GeminiClient
     public function __construct(string $apiKey, string $templatePath)
     {
         $this->apiKey = $apiKey;
-        // NOTE: You can dynamically change the model name here if needed
-        $this->apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' . $this->apiKey;
+        $this->apiUrl = '[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=)' . $this->apiKey;
         $this->loadTemplate($templatePath);
         $this->defineTools();
     }
 
     private function defineTools(): void
     {
-        // This defines the function calling tools
+        // This defines the function calling tools as a complete, separate tool object
         $this->tools = [
             [
                 'functionDeclarations' => [
-                    ['name' => 'send_private_message', 'description' => 'Sends a private message to another user.', 'parameters' => ['type' => 'OBJECT','properties' => ['user_id_to_send' => ['type' => 'NUMBER'],'message_text' => ['type' => 'STRING']],'required' => ['user_id_to_send', 'message_text']]],
-                    ['name' => 'delete_chat_history', 'description' => 'Deletes the current conversation history.','parameters' => ['type' => 'OBJECT', 'properties' => new \stdClass()]]
+                    [
+                        'name' => 'send_private_message',
+                        'description' => 'Sends a private message to another user.',
+                        'parameters' => [
+                            'type' => 'OBJECT',
+                            'properties' => [
+                                'user_id_to_send' => ['type' => 'NUMBER'],
+                                'message_text' => ['type' => 'STRING']
+                            ],
+                            'required' => ['user_id_to_send', 'message_text']
+                        ]
+                    ],
+                    [
+                        'name' => 'delete_chat_history',
+                        'description' => 'Deletes the current conversation history.',
+                        'parameters' => [
+                            'type' => 'OBJECT',
+                            'properties' => new \stdClass() // Represents an empty object {}
+                        ]
+                    ]
                 ]
             ]
         ];
@@ -46,24 +62,25 @@ class GeminiClient
         // Overwrite the contents with the real, full conversation history
         $data['contents'] = $full_context;
 
-        // --- THE FINAL FIX IS HERE ---
-        // Get the content of the tool from the JSON template (e.g., google_search)
-        $templateToolContent = $this->promptTemplate['tools'][0] ?? []; 
-        // Get the content of the tool defined in PHP (e.g., function calling)
-        $definedToolContent = $this->tools[0] ?? []; 
+        // --- CORRECTED TOOL MERGING LOGIC ---
+        // 1. Get the tools from the template (e.g., Google Search). This is already an array of tools.
+        $templateTools = $this->promptTemplate['tools'] ?? [];
 
-        // Merge the *contents* of both tools into a single, large tool object
-        $mergedTool = array_merge($templateToolContent, $definedToolContent);
+        // 2. Get the tools defined in PHP (e.g., Function Calling). This is also an array of tools.
+        $definedTools = $this->tools ?? [];
 
-        // If the merged tool is not empty, wrap it in an array as the final toolset
-        // This creates the correct structure: [ {tool1, tool2, ...} ]
-        if (!empty($mergedTool)) {
-            $data['tools'] = [$mergedTool];
+        // 3. Merge the two arrays of tools into one final array of tool objects.
+        // This correctly creates a list like [ {googleSearchRetrieval}, {functionDeclarations} ]
+        $allTools = array_merge($templateTools, $definedTools);
+
+        // 4. Assign the final array to the payload if it's not empty.
+        if (!empty($allTools)) {
+            $data['tools'] = $allTools;
         } else {
-            // If no tools are defined anywhere, remove the key to avoid errors
+            // If no tools are defined anywhere, remove the key to avoid errors.
             unset($data['tools']);
         }
-        // --- END OF FINAL FIX ---
+        // --- END OF CORRECTION ---
 
         $jsonData = json_encode($data);
 
@@ -77,9 +94,7 @@ class GeminiClient
             CURLOPT_TIMEOUT => 90,
         ]);
 
-        error_log("INFO: Sending request to Gemini...");
         $response = curl_exec($ch);
-        error_log("INFO: Received response from Gemini.");
 
         if (curl_errno($ch)) { 
             $error = curl_error($ch);
@@ -90,12 +105,16 @@ class GeminiClient
 
         $result = json_decode($response, true);
         if (isset($result['error'])) { 
-            throw new \Exception("Gemini API Error: " . $result['error']['message']); 
+            // Log the detailed error for better debugging
+            $errorMessage = "Gemini API Error: " . ($result['error']['message'] ?? 'Unknown Error');
+            error_log("FATAL Gemini Error Payload: " . $jsonData);
+            error_log("FATAL Gemini Error Response: " . $response);
+            throw new \Exception($errorMessage); 
         }
 
         $candidate = $result['candidates'][0] ?? null;
         if (!$candidate) { 
-            throw new \Exception("Invalid Gemini Response: No candidates. " . $response); 
+            throw new \Exception("Invalid Gemini Response: No candidates. Full Response: " . $response); 
         }
 
         if (isset($candidate['content']['parts'][0]['functionCall'])) { 
@@ -106,7 +125,12 @@ class GeminiClient
             return ['type' => 'text', 'data' => $candidate['content']['parts'][0]['text']]; 
         }
 
-        throw new \Exception("Invalid Gemini Response: No text or function call. " . $response);
+        // Handle cases where the response is valid but empty (e.g., safety block)
+        if (isset($candidate['finishReason']) && $candidate['finishReason'] !== 'STOP') {
+             throw new \Exception("Gemini Response Finished Unusually. Reason: " . $candidate['finishReason'] . ". Full Response: " . $response);
+        }
+
+        throw new \Exception("Invalid Gemini Response: No text or function call. Full Response: " . $response);
     }
 
     private function loadTemplate(string $templatePath): void
