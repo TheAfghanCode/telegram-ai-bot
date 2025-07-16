@@ -18,7 +18,10 @@ class GeminiClient
     public function __construct(string $apiKey, string $templatePath)
     {
         $this->apiKey = $apiKey;
-        $this->apiUrl = '[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=)' . $this->apiKey;
+        // --- THIS IS THE FIX ---
+        // The URL was accidentally formatted as a Markdown link.
+        // We are removing the [ and ](...) characters.
+        $this->apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' . $this->apiKey;
         $this->loadTemplate($templatePath);
         $this->defineTools();
     }
