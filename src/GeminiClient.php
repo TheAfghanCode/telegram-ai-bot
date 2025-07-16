@@ -18,10 +18,7 @@ class GeminiClient
     public function __construct(string $apiKey, string $templatePath)
     {
         $this->apiKey = $apiKey;
-        // --- THIS IS THE FIX ---
-        // The URL was accidentally formatted as a Markdown link.
-        // We are removing the [ and ](...) characters.
-        $this->apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' . $this->apiKey;
+        $this->apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' . $this->apiKey;
         $this->loadTemplate($templatePath);
         $this->defineTools();
     }
@@ -73,7 +70,7 @@ class GeminiClient
         $definedTools = $this->tools ?? [];
 
         // 3. Merge the two arrays of tools into one final array of tool objects.
-        // This correctly creates a list like [ {googleSearchRetrieval}, {functionDeclarations} ]
+        // This correctly creates a list like [ {googleSearch}, {functionDeclarations} ]
         $allTools = array_merge($templateTools, $definedTools);
 
         // 4. Assign the final array to the payload if it's not empty.
@@ -85,7 +82,11 @@ class GeminiClient
         }
         // --- END OF CORRECTION ---
 
-        $jsonData = json_encode($data);
+        $jsonData = json_encode($data, JSON_PRETTY_PRINT);
+        
+        // Log the final payload right before sending to be 100% sure
+        error_log("--- FINAL GEMINI PAYLOAD ---");
+        error_log($jsonData);
 
         $ch = curl_init($this->apiUrl);
         curl_setopt_array($ch, [
@@ -110,7 +111,6 @@ class GeminiClient
         if (isset($result['error'])) { 
             // Log the detailed error for better debugging
             $errorMessage = "Gemini API Error: " . ($result['error']['message'] ?? 'Unknown Error');
-            error_log("FATAL Gemini Error Payload: " . $jsonData);
             error_log("FATAL Gemini Error Response: " . $response);
             throw new \Exception($errorMessage); 
         }
